@@ -1,0 +1,41 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    platform: linux/arm64
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - rag-net
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        sleep 1
+        ollama pull gemma:2b
+        wait
+
+  rag-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rag-bot
+    volumes:
+      - ./data:/data
+    environment:
+      - LLM_API_URL=http://ollama:11434
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    depends_on:
+      - ollama
+    networks:
+      - rag-net
+    restart: on-failure
+
+volumes:
+  ollama_data:
+
+networks:
+  rag-net:
+    driver: bridge
