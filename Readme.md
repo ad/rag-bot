@@ -275,7 +275,7 @@ docker-compose up ollama
 # Запуск бота локально
 export LLM_API_URL=http://localhost:11434
 export TELEGRAM_BOT_TOKEN=your_token
-go run cmd/main.go
+go run .
 ```
 
 ### Добавление новых возможностей

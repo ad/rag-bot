@@ -58,7 +58,8 @@ func main() {
 	// Получение URL API LLM из переменной окружения
 	llmAPIURL := os.Getenv("LLM_API_URL")
 	if llmAPIURL == "" {
-		log.Fatal("LLM_API_URL is not set")
+		// log.Fatal("LLM_API_URL is not set")
+		llmAPIURL = "http://localhost:11434"
 	}
 
 	// Инициализация LLM с HTTP API
