@@ -1,0 +1,21 @@
+# Cache directory
+/cache/
+*.cache
+
+# Environment files
+.env
+.env.local
+
+# Logs
+*.log
+
+# Go specific
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.work

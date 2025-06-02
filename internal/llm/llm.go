@@ -8,24 +8,33 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
-	"github.com/ad/rag-bot/internal/retrieval"
+	_ "github.com/joho/godotenv/autoload"
 	"golang.org/x/sync/singleflight"
 )
+
+type LLMEngine interface {
+	GenerateResponse(prompt string) (string, error)
+	GenerateEmbedding(text string) ([]float32, error)
+	Answer(query string, docs []Document) (string, error)
+}
 
 func getLLMModel() string {
 	model := os.Getenv("LLM_MODEL")
 	if model == "" {
-		return "smollm2:135m" // значение по умолчанию
+		return "smollm2:135m"
 	}
 	return model
 }
 
 type HTTPLLMEngine struct {
-	apiURL string
-	client *http.Client
-	sf     singleflight.Group // для предотвращения одновременных запросов на скачивание
+	apiURL     string
+	client     *http.Client
+	sf         singleflight.Group
+	modelCache map[string]bool // кэш для проверки доступности моделей
+	cacheMutex sync.RWMutex    // мьютекс для безопасного доступа к кэшу
 }
 
 func NewHTTPLLM(apiURL string) *HTTPLLMEngine {
@@ -34,50 +43,81 @@ func NewHTTPLLM(apiURL string) *HTTPLLMEngine {
 		client: &http.Client{
 			Timeout: 600 * time.Second,
 		},
+		modelCache: make(map[string]bool),
 	}
 }
 
-// Структуры для Ollama API
-type OllamaRequest struct {
-	Model   string                 `json:"model"`
-	Prompt  string                 `json:"prompt"`
-	Stream  bool                   `json:"stream"`
-	Options map[string]interface{} `json:"options,omitempty"`
+// ...existing structs...
+
+func (h *HTTPLLMEngine) GenerateResponse(prompt string) (string, error) {
+	modelName := getLLMModel()
+
+	// Проверяем доступность модели без лишнего логирования
+	if err := h.ensureModelAvailableQuiet(modelName); err != nil {
+		return "", fmt.Errorf("model not available: %w", err)
+	}
+
+	// Подготовка запроса для Ollama
+	reqBody := OllamaRequest{
+		Model:  modelName,
+		Prompt: prompt,
+		Stream: false,
+		Options: map[string]interface{}{
+			"temperature": 0.7,
+			"num_predict": 1024,
+			"top_k":       40,
+			"top_p":       0.95,
+		},
+	}
+
+	jsonData, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("ошибка сериализации запроса: %w", err)
+	}
+
+	// Отправка запроса к Ollama API
+	resp, err := h.client.Post(h.apiURL+"/api/generate", "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", fmt.Errorf("ошибка HTTP запроса: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Проверка статуса ответа
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("HTTP ошибка: %d, ответ: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	// Чтение тела ответа
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("ошибка чтения ответа: %w", err)
+	}
+
+	// Парсинг ответа
+	var respBody OllamaResponse
+	if err := json.Unmarshal(bodyBytes, &respBody); err != nil {
+		return "", fmt.Errorf("ошибка десериализации ответа: %w", err)
+	}
+
+	return respBody.Response, nil
 }
 
-type OllamaResponse struct {
-	Response string `json:"response"`
-	Done     bool   `json:"done"`
+// Проверка модели из кэша
+func (h *HTTPLLMEngine) isModelCached(modelName string) bool {
+	h.cacheMutex.RLock()
+	defer h.cacheMutex.RUnlock()
+	return h.modelCache[modelName]
 }
 
-type OllamaModelsResponse struct {
-	Models []OllamaModel `json:"models"`
-}
-
-type OllamaModel struct {
-	Name     string `json:"name"`
-	Size     int64  `json:"size"`
-	Digest   string `json:"digest"`
-	Modified string `json:"modified_at"`
-}
-
-// Структура для запроса на скачивание модели
-type OllamaPullRequest struct {
-	Name   string `json:"name"`
-	Stream bool   `json:"stream"`
-}
-
-// Структура ответа при скачивании модели
-type OllamaPullResponse struct {
-	Status          string `json:"status"`
-	Digest          string `json:"digest,omitempty"`
-	Total           int64  `json:"total,omitempty"`
-	Completed       int64  `json:"completed,omitempty"`
-	CompletedLength int64  `json:"completed_length,omitempty"`
+// Обновление кэша модели
+func (h *HTTPLLMEngine) cacheModel(modelName string, available bool) {
+	h.cacheMutex.Lock()
+	defer h.cacheMutex.Unlock()
+	h.modelCache[modelName] = available
 }
 
 func (h *HTTPLLMEngine) checkModelAvailability(modelName string) error {
-	// Получаем список доступных моделей
 	resp, err := h.client.Get(h.apiURL + "/api/tags")
 	if err != nil {
 		return fmt.Errorf("failed to get models list: %w", err)
@@ -101,7 +141,7 @@ func (h *HTTPLLMEngine) checkModelAvailability(modelName string) error {
 	// Проверяем, есть ли нужная модель в списке
 	for _, model := range modelsResp.Models {
 		if strings.Contains(model.Name, modelName) || model.Name == modelName {
-			fmt.Printf("Model %s found and available\n", modelName)
+			h.cacheModel(modelName, true)
 			return nil
 		}
 	}
@@ -109,12 +149,47 @@ func (h *HTTPLLMEngine) checkModelAvailability(modelName string) error {
 	return fmt.Errorf("model %s not found in available models", modelName)
 }
 
+type OllamaPullRequest struct {
+	Name   string `json:"name"`
+	Stream bool   `json:"stream"`
+}
+type OllamaPullResponse struct {
+	Name      string `json:"name"`
+	Status    string `json:"status"`
+	Total     int    `json:"total"`
+	Completed int    `json:"completed"`
+}
+type OllamaModelsResponse struct {
+	Models []OllamaModel `json:"models"`
+}
+type OllamaModel struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Size        int    `json:"size"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+type OllamaRequest struct {
+	Model   string                 `json:"model"`
+	Prompt  string                 `json:"prompt"`
+	Stream  bool                   `json:"stream"`
+	Options map[string]interface{} `json:"options,omitempty"`
+}
+type OllamaResponse struct {
+	Response string `json:"response"`
+	Usage    struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
+}
+
 func (h *HTTPLLMEngine) pullModel(modelName string) error {
-	fmt.Printf("Starting to download model: %s\n", modelName)
+	fmt.Printf("Скачивание модели: %s\n", modelName)
 
 	pullReq := OllamaPullRequest{
 		Name:   modelName,
-		Stream: true, // используем stream для отслеживания прогресса
+		Stream: true,
 	}
 
 	jsonData, err := json.Marshal(pullReq)
@@ -136,6 +211,7 @@ func (h *HTTPLLMEngine) pullModel(modelName string) error {
 	// Читаем stream ответ для отслеживания прогресса
 	decoder := json.NewDecoder(resp.Body)
 	var lastStatus string
+	var lastProgress float64
 
 	for {
 		var pullResp OllamaPullResponse
@@ -146,24 +222,31 @@ func (h *HTTPLLMEngine) pullModel(modelName string) error {
 			return fmt.Errorf("failed to decode pull response: %w", err)
 		}
 
-		// Выводим прогресс только при изменении статуса
-		if pullResp.Status != lastStatus {
-			fmt.Printf("Model %s: %s\n", modelName, pullResp.Status)
-			lastStatus = pullResp.Status
-		}
-
-		// Если есть информация о прогрессе, выводим её
+		// Выводим прогресс только при значительных изменениях
 		if pullResp.Total > 0 && pullResp.Completed > 0 {
 			percentage := float64(pullResp.Completed) / float64(pullResp.Total) * 100
-			fmt.Printf("Model %s download progress: %.1f%%\n", modelName, percentage)
+			// Логируем прогресс только если изменение больше 10%
+			if percentage-lastProgress >= 10.0 {
+				fmt.Printf("Скачивание %s: %.0f%%\n", modelName, percentage)
+				lastProgress = percentage
+			}
+		} else if pullResp.Status != lastStatus && pullResp.Status != "" {
+			fmt.Printf("Модель %s: %s\n", modelName, pullResp.Status)
+			lastStatus = pullResp.Status
 		}
 	}
 
-	fmt.Printf("Model %s downloaded successfully\n", modelName)
+	fmt.Printf("Модель %s скачана успешно\n", modelName)
 	return nil
 }
 
-func (h *HTTPLLMEngine) ensureModelAvailable(modelName string) error {
+// Тихая проверка модели (без логирования)
+func (h *HTTPLLMEngine) ensureModelAvailableQuiet(modelName string) error {
+	// Проверяем кэш
+	if h.isModelCached(modelName) {
+		return nil
+	}
+
 	// Используем singleflight для предотвращения одновременного скачивания
 	_, err, _ := h.sf.Do(modelName, func() (interface{}, error) {
 		// Сначала проверяем, есть ли модель
@@ -171,7 +254,7 @@ func (h *HTTPLLMEngine) ensureModelAvailable(modelName string) error {
 			return nil, nil
 		}
 
-		fmt.Printf("Model %s not found, attempting to download...\n", modelName)
+		fmt.Printf("Модель %s не найдена, начинаем скачивание...\n", modelName)
 
 		// Если модели нет, скачиваем её
 		if err := h.pullModel(modelName); err != nil {
@@ -189,59 +272,57 @@ func (h *HTTPLLMEngine) ensureModelAvailable(modelName string) error {
 	return err
 }
 
-func (h *HTTPLLMEngine) waitForModel(modelName string, maxWaitTime time.Duration) error {
-	start := time.Now()
-
-	// Сначала пытаемся обеспечить доступность модели
-	if err := h.ensureModelAvailable(modelName); err != nil {
-		return err
-	}
-
-	// Затем ждём, пока модель станет полностью готова
-	for time.Since(start) < maxWaitTime {
-		if err := h.checkModelAvailability(modelName); err == nil {
-			return nil
-		}
-
-		fmt.Printf("Model %s not ready yet, waiting...\n", modelName)
-		time.Sleep(5 * time.Second)
-	}
-
-	return fmt.Errorf("model %s not available after %v", modelName, maxWaitTime)
+func (h *HTTPLLMEngine) ensureModelAvailable(modelName string) error {
+	return h.ensureModelAvailableQuiet(modelName)
 }
 
-func (h *HTTPLLMEngine) Answer(query string, docs []retrieval.Document) (string, error) {
-	start := time.Now()
-	defer func() {
-		fmt.Printf("LLM request took: %v\n", time.Since(start))
-	}()
+func (h *HTTPLLMEngine) waitForModel(modelName string, maxWaitTime time.Duration) error {
+	return h.ensureModelAvailableQuiet(modelName)
+}
 
+// Document represents a document with header, link, and keywords
+type Document struct {
+	Header string
+	Link   string
+	Text   string
+}
+
+func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 	modelName := getLLMModel()
 
-	// Проверяем доступность модели с ожиданием до 10 минут (для скачивания)
-	fmt.Printf("Ensuring model %s is available...\n", modelName)
-	if err := h.waitForModel(modelName, 10*time.Minute); err != nil {
+	// Проверяем доступность модели без лишнего логирования
+	if err := h.ensureModelAvailableQuiet(modelName); err != nil {
 		return "", fmt.Errorf("model not available: %w", err)
 	}
 
-	// ...existing code...
 	// Формирование контекста из документов
 	context := ""
 	for i, doc := range docs {
-		context += fmt.Sprintf("Документ %d:\nЗаголовок: %s\nСсылка: %s\nКлючевые фразы: %s\n\n",
-			i+1, doc.Header, doc.Link, doc.Keywords)
+		context += fmt.Sprintf("=== ДОКУМЕНТ %d ===\nЗАГОЛОВОК: %s\nССЫЛКА: %s\nСОДЕРЖАНИЕ:\n%s\n\n",
+			i+1, doc.Header, doc.Link, doc.Text)
 	}
 
 	// Формирование промпта
-	prompt := fmt.Sprintf(`Ты — помощник, который анализирует список документов и выбирает самый подходящий для ответа на вопрос пользователя.
+	prompt := fmt.Sprintf(`Ты эксперт по технической поддержке. Ответь на вопрос пользователя, используя ТОЛЬКО информацию из документов ниже.
+
+ДОКУМЕНТЫ:
 %s
 
-Вопрос пользователя:
-%s
+ПРАВИЛА:
+  - Дай конкретные шаги решения проблемы
+  - Отвечай кратко и по существу
+  - Используй только факты из документов
+  - Обязательно указывай источник в формате: Название: ссылка
+  - Если в документах нет ответа, напиши "Информация не найдена"
+  - Если нужны дополнительные действия, перечисли их
+  - НЕ повторяй правила в ответе
+  - НЕ упоминай "документы" или "инструкции"
 
-Ничего не придумывай, не делай предположений, просто выбери один наиболее релевантный документ из списка.
-Не добавляй пояснений.
-Ответь только заголовком и ссылкой на один наиболее релевантный документ:
+ВОПРОС: %s
+
+Дай подробный ответ с конкретными шагами и обязательно укажи ссылку на источник в формате "Название: ссылка".
+
+ОТВЕТ:
 `, context, query)
 
 	// Подготовка запроса для Ollama
@@ -250,10 +331,12 @@ func (h *HTTPLLMEngine) Answer(query string, docs []retrieval.Document) (string,
 		Prompt: prompt,
 		Stream: false,
 		Options: map[string]interface{}{
-			"temperature": 0.3,
-			"num_predict": 512,
-			"top_k":       40,
-			"top_p":       0.95,
+			"temperature":    0.3,
+			"num_predict":    600,
+			"top_k":          30,
+			"top_p":          0.8,
+			"repeat_penalty": 1.1,
+			// "stop":           []string{"\n\nВОПРОС:", "ПРАВИЛА:", "ДОКУМЕНТЫ:"}, // Останавливаемся на этих словах
 		},
 	}
 
@@ -261,9 +344,6 @@ func (h *HTTPLLMEngine) Answer(query string, docs []retrieval.Document) (string,
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal request: %w", err)
 	}
-
-	// log request for debugging
-	fmt.Printf("Request JSON: %s\n", jsonData)
 
 	// Отправка запроса к Ollama API
 	resp, err := h.client.Post(h.apiURL+"/api/generate", "application/json", bytes.NewBuffer(jsonData))
@@ -275,7 +355,6 @@ func (h *HTTPLLMEngine) Answer(query string, docs []retrieval.Document) (string,
 	// Проверка статуса ответа
 	if resp.StatusCode != http.StatusOK {
 		bodyBytes, _ := io.ReadAll(resp.Body)
-		fmt.Printf("Error response: %s\n", string(bodyBytes))
 		return "", fmt.Errorf("API error: status %d, body: %s", resp.StatusCode, string(bodyBytes))
 	}
 
@@ -284,7 +363,6 @@ func (h *HTTPLLMEngine) Answer(query string, docs []retrieval.Document) (string,
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
-	fmt.Printf("Response body: %s\n", string(bodyBytes))
 
 	// Парсинг ответа
 	var respBody OllamaResponse
@@ -293,4 +371,99 @@ func (h *HTTPLLMEngine) Answer(query string, docs []retrieval.Document) (string,
 	}
 
 	return respBody.Response, nil
+}
+
+func (h *HTTPLLMEngine) GenerateEmbedding(text string) ([]float32, error) {
+	client := NewOllamaClient(h.apiURL, "mxbai-embed-large")
+	return client.GenerateEmbedding(text)
+}
+
+type OllamaClient struct {
+	baseURL    string
+	model      string
+	embedModel string
+	httpEngine *HTTPLLMEngine
+}
+
+func NewOllamaClient(baseURL, model string) *OllamaClient {
+	return &OllamaClient{
+		baseURL:    baseURL,
+		model:      model,
+		embedModel: "mxbai-embed-large",
+		httpEngine: NewHTTPLLM(baseURL),
+	}
+}
+
+// EmbeddingRequest альтернативная структура запроса
+type EmbeddingRequest struct {
+	Model string `json:"model"`
+	Input string `json:"input"`
+}
+
+// EmbeddingResponse структура ответа от Ollama API
+type EmbeddingResponse struct {
+	Model      string      `json:"model"`
+	Embeddings [][]float32 `json:"embeddings"`
+}
+
+func (c *OllamaClient) GenerateEmbedding(text string) ([]float32, error) {
+	// Проверяем входной текст
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("входной текст пустой")
+	}
+
+	// Ограничиваем длину текста для эмбеддинга
+	if len(text) > 8000 {
+		text = text[:8000]
+	}
+
+	// Проверяем доступность модели БЕЗ логирования
+	if err := c.httpEngine.ensureModelAvailableQuiet(c.embedModel); err != nil {
+		return nil, fmt.Errorf("model not available: %w", err)
+	}
+
+	request := EmbeddingRequest{
+		Model: c.embedModel,
+		Input: text,
+	}
+
+	reqBody, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка сериализации запроса: %w", err)
+	}
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Post(c.baseURL+"/api/embed", "application/json", bytes.NewBuffer(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("ошибка HTTP запроса: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP ошибка: %d, ответ: %s", resp.StatusCode, string(body))
+	}
+
+	// Читаем ответ
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("ошибка чтения ответа: %w", err)
+	}
+
+	var response EmbeddingResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("ошибка десериализации ответа: %w, тело ответа: %s", err, string(body))
+	}
+
+	// Проверяем, что есть хотя бы один эмбеддинг
+	if len(response.Embeddings) == 0 {
+		return nil, fmt.Errorf("API вернул пустой массив эмбеддингов")
+	}
+
+	// Возвращаем первый эмбеддинг
+	if len(response.Embeddings[0]) == 0 {
+		return nil, fmt.Errorf("эмбеддинг пустой")
+	}
+
+	return response.Embeddings[0], nil
 }
