@@ -6,11 +6,20 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/ad/rag-bot/internal/retrieval"
 )
+
+func getLLMModel() string {
+	model := os.Getenv("LLM_MODEL")
+	if model == "" {
+		return "smollm2:135m" // значение по умолчанию
+	}
+	return model
+}
 
 type HTTPLLMEngine struct {
 	apiURL string
@@ -103,7 +112,7 @@ func (h *HTTPLLMEngine) Answer(query string, docs []retrieval.Document) (string,
 		fmt.Printf("LLM request took: %v\n", time.Since(start))
 	}()
 
-	modelName := "gemma:2b"
+	modelName := getLLMModel()
 
 	// Проверяем доступность модели с ожиданием до 2 минут
 	fmt.Printf("Checking if model %s is available...\n", modelName)

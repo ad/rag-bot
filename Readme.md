@@ -30,7 +30,7 @@ RAG Chat Bot — это интеллектуальный Telegram-бот, кот
 ## Технологический стек
 
 - **Backend**: Go 1.24+
-- **LLM**: Ollama (Gemma 2B)
+- **LLM**: Ollama (smollm2:135m)
 - **Containerization**: Docker, Docker Compose
 - **Bot Framework**: go-telegram/bot
 - **Data Format**: CSV (заголовок, ссылка, ключевые фразы)
@@ -119,7 +119,7 @@ docker exec -it ollama ollama list
 docker exec -it ollama ollama pull llama2:7b
 
 # Удаление модели
-docker exec -it ollama ollama rm gemma:2b
+docker exec -it ollama ollama rm smollm2:135m
 ```
 
 ### Отладка
@@ -131,7 +131,7 @@ curl http://localhost:11434/api/tags
 # Тест генерации
 curl -X POST http://localhost:11434/api/generate \
   -H "Content-Type: application/json" \
-  -d '{"model": "gemma:2b", "prompt": "Hello", "stream": false}'
+  -d '{"model": "smollm2:135m", "prompt": "Hello", "stream": false}'
 
 # Подключение к контейнеру
 docker exec -it rag-bot sh
@@ -139,6 +139,40 @@ docker exec -it ollama sh
 ```
 
 ## Конфигурация
+
+### Переменные окружения
+
+Проект поддерживает следующие переменные окружения:
+
+- `LLM_MODEL` - модель языковой модели (по умолчанию: `smollm2:135m`)
+- `TELEGRAM_BOT_TOKEN` - токен Telegram бота
+- `LLM_API_URL` - URL API языковой модели (по умолчанию: `http://ollama:11434`)
+
+### Настройка модели
+
+Вы можете использовать различные модели LLM:
+
+```bash
+# Запуск с моделью по умолчанию
+docker-compose up
+
+# Запуск с другой моделью
+LLM_MODEL=llama2:7b docker-compose up
+
+# Или создайте .env файл
+echo "LLM_MODEL=mistral:7b" > .env
+docker-compose up
+```
+
+### Доступные модели
+
+Примеры поддерживаемых моделей:
+- `smollm2:135m` (по умолчанию, быстрая)
+- `llama2:7b`
+- `mistral:7b`
+
+Полный список доступных моделей можно найти на [Ollama Library](https://ollama.ai/library).
+
 
 ### Структура проекта
 
@@ -205,14 +239,14 @@ ragchat/
 
 2. Перезагрузите модель:
    ```bash
-   docker exec -it ollama ollama pull gemma:2b
+   docker exec -it ollama ollama pull smollm2:135m
    ```
 
 ### Медленные ответы
 
 1. Используйте более легкую модель:
    ```bash
-   docker exec -it ollama ollama pull gemma:2b
+   docker exec -it ollama ollama pull smollm2:135m
    ```
 
 2. Уменьшите `num_predict` в настройках LLM

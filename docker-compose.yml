@@ -2,7 +2,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: ollama
-    platform: linux/arm64
+    # platform: linux/arm64
     ports:
       - "11434:11434"
     volumes:
@@ -14,7 +14,7 @@ services:
       - |
         ollama serve &
         sleep 1
-        ollama pull gemma:2b
+        ollama pull ${LLM_MODEL:-smollm2:135m}
         wait
 
   rag-bot:
@@ -26,6 +26,7 @@ services:
       - ./data:/data
     environment:
       - LLM_API_URL=http://ollama:11434
+      - LLM_MODEL=${LLM_MODEL:-smollm2:135m}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     depends_on:
       - ollama
