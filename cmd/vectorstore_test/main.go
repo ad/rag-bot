@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	// Создаем папку для тестов
+	// Создаем папку если её нет
 	if err := os.MkdirAll("data", 0755); err != nil {
 		log.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func main() {
 	// 1. Инициализируем компоненты
 	fmt.Println("1. Инициализация компонентов...")
 	markdownParser := parser.NewMarkdownParser()
-	llmClient := llm.NewOllamaClient("http://localhost:11434", "gemma3:1b")
+	llmClient := llm.NewOllamaClient()
 	vectorStore := vectorstore.NewVectorStore()
 
 	// 2. Парсим документы

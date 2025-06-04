@@ -12,10 +12,7 @@ services:
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
-        ollama serve &
-        sleep 1
-        ollama pull ${LLM_MODEL:-smollm2:135m}
-        wait
+        OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-4096} ollama serve
 
   rag-bot:
     build:
@@ -26,7 +23,9 @@ services:
       - ./data:/data
     environment:
       - LLM_API_URL=http://ollama:11434
-      - LLM_MODEL=${LLM_MODEL:-smollm2:135m}
+      - LLM_MODEL=${LLM_MODEL:-gemma3:1b}
+      - LLM_LLM_EMBEDDINGS_MODEL=${LLM_LLM_EMBEDDINGS_MODEL:-nomic-embed-text}
+      - OLLAMA_CONTEXT_LENGTH=${OLLAMA_CONTEXT_LENGTH:-4096}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
     depends_on:
       - ollama

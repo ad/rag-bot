@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	client := llm.NewOllamaClient("http://localhost:11434", "gemma3:1b")
+	client := llm.NewOllamaClient()
 
 	fmt.Println("Тестируем генерацию эмбеддингов...")
 
@@ -18,11 +18,16 @@ func main() {
 		return
 	}
 
-	fmt.Printf("Размер эмбеддинга: %d\n", len(embedding))
-	if len(embedding) == 0 {
+	count := len(embedding)
+
+	if count == 0 {
 		log.Println("Эмбеддинг пустой, проверьте работу LLM сервера.")
 		return
 	}
 
-	fmt.Printf("Первые 5 значений: %v\n", embedding[:5])
+	fmt.Printf("Размер эмбеддинга: %d\n", count)
+
+	testNum := min(3, count) // Ограничиваем вывод первыми 3 значениями для краткости
+
+	fmt.Printf("Первые %d значения: %v\n", testNum, embedding[:testNum])
 }

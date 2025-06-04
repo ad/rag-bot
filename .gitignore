@@ -1,6 +1,7 @@
 # Cache directory
 /cache/
 *.cache
+/data/*.md
 
 # Environment files
 .env

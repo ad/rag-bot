@@ -32,7 +32,7 @@ func main() {
 	requestDelay := 1 * time.Second // Задержка между запросами (1 секунда)
 
 	// Создаем папку для результатов
-	outputDir := "parsed_pages"
+	outputDir := "data"
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		log.Fatal("Ошибка создания директории:", err)
 	}

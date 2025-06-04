@@ -25,11 +25,7 @@ func main() {
 	rateLimiter := NewRateLimiter()
 
 	// 1. Сначала инициализируем LLM
-	llmAPIURL := os.Getenv("LLM_API_URL")
-	if llmAPIURL == "" {
-		llmAPIURL = "http://localhost:11434"
-	}
-	llmEngine := llm.NewHTTPLLM(llmAPIURL)
+	llmEngine := llm.NewHTTPLLM(llm.GetApiURL())
 
 	// 2. Инициализируем векторную систему и кэш
 	fmt.Println("Инициализация векторной системы...")
@@ -68,6 +64,8 @@ func main() {
 		if i%10 == 0 {
 			fmt.Printf("Обработано %d/%d документов (кэш: %d попаданий, %d новых)\n",
 				i, len(documents), cacheHits, cacheUpdates)
+
+			embeddingCache.FlushCache() // Сбрасываем кэш каждые 10 документов
 		}
 
 		text := doc.Title + "\n" + doc.Content
@@ -109,6 +107,8 @@ func main() {
 
 	if successCount == 0 {
 		log.Fatal("Не удалось сгенерировать эмбеддинги ни для одного документа")
+	} else {
+		embeddingCache.FlushCache() // Сбрасываем кэш каждые 10 документов
 	}
 
 	vectorStore.AddDocuments(documents)
@@ -126,6 +126,7 @@ func main() {
 	}
 
 	opts := []bot.Option{
+		bot.WithSkipGetMe(),
 		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, update *models.Update) {
 			if update.Message == nil {
 				return
@@ -193,7 +194,7 @@ func main() {
 				llmDocs = append(llmDocs, llmDoc)
 			}
 
-			log.Printf("Found %d documents for query: %s", len(llmDocs), query)
+			log.Printf("Found %d documents for query: %s, %+v", len(llmDocs), query, llmDocs)
 
 			// Генерируем ответ
 			response, err := llmEngine.Answer(query, llmDocs)
@@ -226,6 +227,12 @@ func main() {
 	defer cancel()
 
 	log.Println("Bot started...")
+	if me, err := b.GetMe(ctx); err != nil {
+		log.Fatalf("Failed to get bot info: %v", err)
+	} else {
+		log.Printf("Waiting for messages on @%s (ID: %d)", me.Username, me.ID)
+	}
+
 	b.Start(ctx)
 }
 

@@ -21,12 +21,28 @@ type LLMEngine interface {
 	Answer(query string, docs []Document) (string, error)
 }
 
-func getLLMModel() string {
+func GetLLMModel() string {
 	model := os.Getenv("LLM_MODEL")
 	if model == "" {
-		return "smollm2:135m"
+		return "gemma3:1b"
 	}
 	return model
+}
+
+func GetLLMEmbeddingsModel() string {
+	embedModel := os.Getenv("LLM_EMBEDDINGS_MODEL")
+	if embedModel == "" {
+		return "mxbai-embed-large"
+	}
+	return embedModel
+}
+
+func GetApiURL() string {
+	apiURL := os.Getenv("LLM_API_URL")
+	if apiURL == "" {
+		return "http://localhost:11434"
+	}
+	return apiURL
 }
 
 type HTTPLLMEngine struct {
@@ -50,7 +66,7 @@ func NewHTTPLLM(apiURL string) *HTTPLLMEngine {
 // ...existing structs...
 
 func (h *HTTPLLMEngine) GenerateResponse(prompt string) (string, error) {
-	modelName := getLLMModel()
+	modelName := GetLLMModel()
 
 	// Проверяем доступность модели без лишнего логирования
 	if err := h.ensureModelAvailableQuiet(modelName); err != nil {
@@ -272,14 +288,6 @@ func (h *HTTPLLMEngine) ensureModelAvailableQuiet(modelName string) error {
 	return err
 }
 
-func (h *HTTPLLMEngine) ensureModelAvailable(modelName string) error {
-	return h.ensureModelAvailableQuiet(modelName)
-}
-
-func (h *HTTPLLMEngine) waitForModel(modelName string, maxWaitTime time.Duration) error {
-	return h.ensureModelAvailableQuiet(modelName)
-}
-
 // Document represents a document with header, link, and keywords
 type Document struct {
 	Header string
@@ -288,7 +296,7 @@ type Document struct {
 }
 
 func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
-	modelName := getLLMModel()
+	modelName := GetLLMModel()
 
 	// Проверяем доступность модели без лишнего логирования
 	if err := h.ensureModelAvailableQuiet(modelName); err != nil {
@@ -303,26 +311,24 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 	}
 
 	// Формирование промпта
-	prompt := fmt.Sprintf(`Ты эксперт по технической поддержке. Ответь на вопрос пользователя, используя ТОЛЬКО информацию из документов ниже.
+	prompt := fmt.Sprintf(`Ты эксперт по технической поддержке компании Nethouse. Ответь на вопрос пользователя, используя ТОЛЬКО информацию из документов ниже.
 
-ДОКУМЕНТЫ:
 %s
 
+ВАЖНО! Твой ответ ОБЯЗАТЕЛЬНО должен содержать:
+1. Конкретные шаги решения проблемы
+2. Источник информации в ТОЧНОМ формате: "[ЗАГОЛОВОК]: [ССЫЛКА]"
+
 ПРАВИЛА:
-  - Дай конкретные шаги решения проблемы
-  - Отвечай кратко и по существу
-  - Используй только факты из документов
-  - Обязательно указывай источник в формате: Название: ссылка
-  - Если в документах нет ответа, напиши "Информация не найдена"
-  - Если нужны дополнительные действия, перечисли их
-  - НЕ повторяй правила в ответе
-  - НЕ упоминай "документы" или "инструкции"
+- Отвечай кратко и по существу
+- Используй только факты из документов
+- ОБЯЗАТЕЛЬНО указывай источник после каждого утверждения
+- НЕ упоминай "документы", "содержание" или "инструкции"
+- Если в документах нет ответа, напиши "Пожалуйста, уточните вопрос или напишите человеку на support@nethouse.ru"
 
 ВОПРОС: %s
 
-Дай подробный ответ с конкретными шагами и обязательно укажи ссылку на источник в формате "Название: ссылка".
-
-ОТВЕТ:
+ОТВЕТ (с обязательным указанием источника):
 `, context, query)
 
 	// Подготовка запроса для Ollama
@@ -331,12 +337,12 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 		Prompt: prompt,
 		Stream: false,
 		Options: map[string]interface{}{
-			"temperature":    0.3,
+			"temperature":    0.1,
 			"num_predict":    600,
-			"top_k":          30,
-			"top_p":          0.8,
+			"top_k":          10,
+			"top_p":          0.7,
 			"repeat_penalty": 1.1,
-			// "stop":           []string{"\n\nВОПРОС:", "ПРАВИЛА:", "ДОКУМЕНТЫ:"}, // Останавливаемся на этих словах
+			// "stop":           []string{"ВОПРОС:", "\n\nВОПРОС:", "ПРАВИЛА:"},
 		},
 	}
 
@@ -370,27 +376,28 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	return respBody.Response, nil
+	// Post-processing: проверяем наличие источников и добавляем их при необходимости
+	response := respBody.Response
+	removeWords := []string{"[ЗАГОЛОВОК]: ", "[ССЫЛКА]: ", "ССЫЛКА: ", "[Источник]: ", "[СОДЕРЖАНИЕ]:", "СОДЕРЖАНИЕ:"}
+	for _, word := range removeWords {
+		response = strings.ReplaceAll(response, word, "")
+	}
+
+	return response, nil
 }
 
 func (h *HTTPLLMEngine) GenerateEmbedding(text string) ([]float32, error) {
-	client := NewOllamaClient(h.apiURL, "mxbai-embed-large")
+	client := NewOllamaClient()
 	return client.GenerateEmbedding(text)
 }
 
 type OllamaClient struct {
-	baseURL    string
-	model      string
-	embedModel string
 	httpEngine *HTTPLLMEngine
 }
 
-func NewOllamaClient(baseURL, model string) *OllamaClient {
+func NewOllamaClient() *OllamaClient {
 	return &OllamaClient{
-		baseURL:    baseURL,
-		model:      model,
-		embedModel: "mxbai-embed-large",
-		httpEngine: NewHTTPLLM(baseURL),
+		httpEngine: NewHTTPLLM(GetApiURL()),
 	}
 }
 
@@ -412,18 +419,13 @@ func (c *OllamaClient) GenerateEmbedding(text string) ([]float32, error) {
 		return nil, fmt.Errorf("входной текст пустой")
 	}
 
-	// Ограничиваем длину текста для эмбеддинга
-	if len(text) > 8000 {
-		text = text[:8000]
-	}
-
 	// Проверяем доступность модели БЕЗ логирования
-	if err := c.httpEngine.ensureModelAvailableQuiet(c.embedModel); err != nil {
+	if err := c.httpEngine.ensureModelAvailableQuiet(GetLLMEmbeddingsModel()); err != nil {
 		return nil, fmt.Errorf("model not available: %w", err)
 	}
 
 	request := EmbeddingRequest{
-		Model: c.embedModel,
+		Model: GetLLMEmbeddingsModel(),
 		Input: text,
 	}
 
@@ -433,7 +435,7 @@ func (c *OllamaClient) GenerateEmbedding(text string) ([]float32, error) {
 	}
 
 	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Post(c.baseURL+"/api/embed", "application/json", bytes.NewBuffer(reqBody))
+	resp, err := client.Post(GetApiURL()+"/api/embed", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("ошибка HTTP запроса: %w", err)
 	}
