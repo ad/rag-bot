@@ -165,7 +165,7 @@ func main() {
 			})
 
 			// Ищем документы
-			docs, err := retrievalEngine.FindRelevantDocuments(query, 5)
+			docs, err := retrievalEngine.FindRelevantDocuments(query, 3)
 			if err != nil {
 				log.Printf("Ошибка поиска документов: %v", err)
 				_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
