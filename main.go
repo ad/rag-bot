@@ -144,7 +144,7 @@ func main() {
 			}
 
 			query := update.Message.Text
-			log.Printf("Received message: %s from chat ID: %d", query, update.Message.Chat.ID)
+			log.Printf("Received message from id%d: %s", update.Message.From.ID, query)
 
 			if query == "" || len(query) > 1000 {
 				_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
@@ -183,6 +183,8 @@ func main() {
 				return
 			}
 
+			log.Printf("Found %d documents for query: %s\n", len(docs), query)
+
 			// Конвертируем в формат для llm.Answer()
 			var llmDocs []llm.Document
 			for _, doc := range docs {
@@ -192,9 +194,9 @@ func main() {
 					Text:   doc.Content,
 				}
 				llmDocs = append(llmDocs, llmDoc)
-			}
 
-			log.Printf("Found %d documents for query: %s, %+v", len(llmDocs), query, llmDocs)
+				log.Printf("- %s\n", doc.Title)
+			}
 
 			// Генерируем ответ
 			response, err := llmEngine.Answer(query, llmDocs)

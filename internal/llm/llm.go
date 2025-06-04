@@ -187,10 +187,12 @@ type OllamaModel struct {
 }
 
 type OllamaRequest struct {
-	Model   string                 `json:"model"`
-	Prompt  string                 `json:"prompt"`
-	Stream  bool                   `json:"stream"`
-	Options map[string]interface{} `json:"options,omitempty"`
+	Model    string                 `json:"model"`
+	Prompt   string                 `json:"prompt"`
+	Stream   bool                   `json:"stream"`
+	Options  map[string]interface{} `json:"options,omitempty"`
+	System   string                 `json:"system,omitempty"`   // Для системных инструкций
+	Template string                 `json:"template,omitempty"` // Для поддержки шаблонов
 }
 type OllamaResponse struct {
 	Response string `json:"response"`
@@ -306,43 +308,37 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 	// Формирование контекста из документов
 	context := ""
 	for i, doc := range docs {
-		context += fmt.Sprintf("=== ДОКУМЕНТ %d ===\nЗАГОЛОВОК: %s\nССЫЛКА: %s\nСОДЕРЖАНИЕ:\n%s\n\n",
+		context += fmt.Sprintf("ДОКУМЕНТ %d:\nЗАГОЛОВОК: %s\nССЫЛКА: %s\nТЕКСТ: %s\n\n",
 			i+1, doc.Header, doc.Link, doc.Text)
 	}
-
-	// Формирование промпта
-	prompt := fmt.Sprintf(`Ты эксперт по технической поддержке компании Nethouse. Ответь на вопрос пользователя, используя ТОЛЬКО информацию из документов ниже.
-
-%s
-
-ВАЖНО! Твой ответ ОБЯЗАТЕЛЬНО должен содержать:
-1. Конкретные шаги решения проблемы
-2. Источник информации в ТОЧНОМ формате: "[ЗАГОЛОВОК]: [ССЫЛКА]"
-
-ПРАВИЛА:
-- Отвечай кратко и по существу
-- Используй только факты из документов
-- ОБЯЗАТЕЛЬНО указывай источник после каждого утверждения
-- НЕ упоминай "документы", "содержание" или "инструкции"
-- Если в документах нет ответа, напиши "Пожалуйста, уточните вопрос или напишите человеку на support@nethouse.ru"
-
-ВОПРОС: %s
-
-ОТВЕТ (с обязательным указанием источника):
-`, context, query)
 
 	// Подготовка запроса для Ollama
 	reqBody := OllamaRequest{
 		Model:  modelName,
-		Prompt: prompt,
 		Stream: false,
+		Prompt: fmt.Sprintf("КОНТЕКСТ:\n%s\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: %s\n\nОТВЕТ:", context, query),
+		System: `Ты - специалист технической поддержки компании Nethouse. Анализируй предоставленные документы и отвечай на вопросы пользователей.
+
+ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
+1. Используй ТОЛЬКО информацию из документов
+2. Если в документах есть хотя бы частичная информация - дай ответ на основе этой информации
+3. Указывай источник
+4. Будь конструктивным - даже частичная информация лучше чем отказ
+5. Не задавай вопросы, не используй фразы "я не знаю" или "не могу ответить"
+
+ФОРМАТ ОТВЕТА:
+- Прямой ответ на вопрос
+- Конкретные шаги или инструкции
+- Источник после каждого утверждения
+
+НЕ ОТКАЗЫВАЙСЯ отвечать если есть хоть какая-то релевантная информация в документах.`,
 		Options: map[string]interface{}{
-			"temperature":    0.1,
-			"num_predict":    600,
-			"top_k":          10,
-			"top_p":          0.7,
+			"temperature":    0.3,
+			"num_predict":    800,
+			"top_k":          20,
+			"top_p":          0.8,
 			"repeat_penalty": 1.1,
-			// "stop":           []string{"ВОПРОС:", "\n\nВОПРОС:", "ПРАВИЛА:"},
+			// "stop":           []string{"Вопрос:", "ДОКУМЕНТ"},
 		},
 	}
 
@@ -378,9 +374,13 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 
 	// Post-processing: проверяем наличие источников и добавляем их при необходимости
 	response := respBody.Response
-	removeWords := []string{"[ЗАГОЛОВОК]: ", "[ССЫЛКА]: ", "ССЫЛКА: ", "[Источник]: ", "[СОДЕРЖАНИЕ]:", "СОДЕРЖАНИЕ:"}
+	removeWords := []string{"[ЗАГОЛОВОК]: ", "ЗАГОЛОВОК: ", "[ССЫЛКА]: ", "ССЫЛКА: ", "[Источник]: ", "[СОДЕРЖАНИЕ]:", "СОДЕРЖАНИЕ:"}
 	for _, word := range removeWords {
 		response = strings.ReplaceAll(response, word, "")
+	}
+
+	if response == "" {
+		return "Пожалуйста, уточните вопрос или напишите на support@nethouse.ru", nil
 	}
 
 	return response, nil
