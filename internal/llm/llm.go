@@ -337,7 +337,7 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 			"num_predict":    800,
 			"top_k":          20,
 			"top_p":          0.8,
-			"repeat_penalty": 1.1,
+			"repeat_penalty": 1.3,
 			// "stop":           []string{"Вопрос:", "ДОКУМЕНТ"},
 		},
 	}
