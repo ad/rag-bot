@@ -81,6 +81,16 @@ func (p *MarkdownParser) ParseFile(filePath string) (types.Document, error) {
 
 	content = strings.TrimSpace(strings.Join(lines, "\n"))
 
+	// Заменяем html-ссылки на markdown-ссылки
+	htmlLinkRegex := regexp.MustCompile(`<a\s+href="([^"]+)"[^>]*>(.*?)<\/a>`)
+	content = htmlLinkRegex.ReplaceAllStringFunc(content, func(s string) string {
+		matches := htmlLinkRegex.FindStringSubmatch(s)
+		if len(matches) == 3 {
+			return "[" + matches[2] + "](" + matches[1] + ")"
+		}
+		return s
+	})
+
 	id := strings.TrimSuffix(filepath.Base(filePath), ".md")
 
 	return types.Document{

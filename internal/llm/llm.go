@@ -17,6 +17,7 @@ import (
 
 type LLMEngine interface {
 	GenerateResponse(prompt string, params map[string]interface{}) (string, error)
+	ExtractEssence(query string) (string, error)
 	GenerateEmbedding(text string) ([]float32, error)
 	Answer(query string, docs []Document) (string, error)
 }
@@ -321,15 +322,18 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 	reqBody := OllamaRequest{
 		Model:  modelName,
 		Stream: false,
-		Prompt: fmt.Sprintf("ВОПРОС ПОЛЬЗОВАТЕЛЯ: %s\n\nКОНТЕКСТ:\n%s\n\nОТВЕТ:", context, query),
-		System: `Ты - специалист технической поддержки компании Nethouse. Анализируй предоставленные документы и отвечай на вопросы пользователей.
+		Prompt: fmt.Sprintf("ВОПРОС ПОЛЬЗОВАТЕЛЯ: %s\n\nКОНТЕКСТ:\n%s\n\nОТВЕТ:", query, context), // <-- поменяйте местами query и context
+		System: `Ты - специалист технической поддержки компании Nethouse(Нетхаус). Анализируй предоставленные документы и отвечай на вопросы пользователей.
 
 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
-1. Используй ТОЛЬКО информацию из подходящего документа
-2. Если в документах есть хотя бы частичная информация - дай ответ на основе этой информации
-3. Указывай ССЫЛКУ на источник
-4. Не задавай вопросы, не используй фразы "я не знаю" или "не могу ответить"
-5. Не используй форматирование
+1. ВЫБЕРИ только ОДИН наиболее подходящий ДОКУМЕНТ из списка (ДОКУМЕНТ N)
+2. Используй ТОЛЬКО информацию из выбранного документа для ответа
+3. Если ни один документ не подходит, напиши "Информации недостаточно"
+4. Указывай ССЫЛКУ на источник (c заголовком)
+5. Не задавай вопросы, не используй фразы "я не знаю" или "не могу ответить"
+6. Не используй форматирование
+7. Не используй нумерацию и списки
+8. Не склоняй слова Nethouse и Нетхаус
 
 ФОРМАТ ОТВЕТА:
 - Прямой ответ на вопрос
@@ -338,11 +342,10 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 НЕ ОТКАЗЫВАЙСЯ отвечать если есть хоть какая-то релевантная информация в документах.`,
 		Options: map[string]interface{}{
 			"temperature":    0.3,
-			"num_predict":    800,
+			"num_predict":    512,
 			"top_k":          20,
 			"top_p":          0.8,
 			"repeat_penalty": 1.3,
-			// "stop":           []string{"Вопрос:", "ДОКУМЕНТ"},
 		},
 	}
 
@@ -472,4 +475,26 @@ func (c *OllamaClient) GenerateEmbedding(text string) ([]float32, error) {
 	}
 
 	return response.Embeddings[0], nil
+}
+
+// ExtractEssence выделяет суть запроса, используя Ollama через HTTP API.
+func (h *HTTPLLMEngine) ExtractEssence(query string) (string, error) {
+	// Пример промпта для ollama
+	prompt := "Выдели кратко суть следующего вопроса пользователя, сохранив только ключевые слова и смысл:\n\n" + query
+
+	params := map[string]interface{}{
+		"temperature": 0.1,
+		"max_tokens":  50,
+	}
+
+	// Пример вызова ollama (замените на ваш реальный вызов)
+	resp, err := h.GenerateResponse(prompt, params)
+	if err != nil {
+		return "", err
+	}
+	essence := strings.TrimSpace(resp)
+	if essence == "" {
+		return query, nil // fallback
+	}
+	return essence, nil
 }

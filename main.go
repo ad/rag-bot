@@ -18,6 +18,13 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
+	"github.com/microcosm-cc/bluemonday"
+	"golang.org/x/net/html"
+
+	"github.com/gomarkdown/markdown"
+	mdHtml "github.com/gomarkdown/markdown/html"
+	mdParser "github.com/gomarkdown/markdown/parser"
+
 	_ "github.com/joho/godotenv/autoload"
 )
 
@@ -164,8 +171,16 @@ func main() {
 				Action: models.ChatActionTyping,
 			})
 
+			// выделяем суть из вопроса пользователя при помощи ollama
+			essence, err := llmEngine.ExtractEssence(query)
+			if err != nil {
+				log.Printf("Ошибка выделения сути вопроса: %v", err)
+				essence = query // fallback на исходный запрос
+			}
+			log.Printf("Суть запроса: %s -> %s", query, essence)
+
 			// Ищем документы
-			docs, err := retrievalEngine.FindRelevantDocuments(query, 3)
+			docs, err := retrievalEngine.FindRelevantDocuments(essence, 2)
 			if err != nil {
 				log.Printf("Ошибка поиска документов: %v", err)
 				_, _ = b.SendMessage(ctx, &bot.SendMessageParams{
@@ -183,7 +198,7 @@ func main() {
 				return
 			}
 
-			log.Printf("Found %d documents for query: %s\n", len(docs), query)
+			log.Printf("Found %d documents for query: %s\n", len(docs), essence)
 
 			// Конвертируем в формат для llm.Answer()
 			var llmDocs []llm.Document
@@ -199,15 +214,21 @@ func main() {
 			}
 
 			// Генерируем ответ
-			response, err := llmEngine.Answer(query, llmDocs)
+			response, err := llmEngine.Answer(essence, llmDocs)
 			if err != nil {
 				log.Printf("Ошибка генерации ответа: %v", err)
 				response = "Ошибка при генерации ответа."
 			}
 
+			response = TelegramSupportedHTML(string(mdToHTML([]byte(truncateText(response, 4000)))))
+
 			_, err = b.SendMessage(ctx, &bot.SendMessageParams{
-				ChatID: update.Message.Chat.ID,
-				Text:   truncateText(response, 4000),
+				ChatID:    update.Message.Chat.ID,
+				Text:      string(response),
+				ParseMode: models.ParseModeHTML,
+				LinkPreviewOptions: &models.LinkPreviewOptions{
+					IsDisabled: bot.True(),
+				},
 			})
 
 			log.Println("Ответ:", truncateText(response, 4000))
@@ -238,18 +259,69 @@ func main() {
 	b.Start(ctx)
 }
 
-// ...existing code для остальных функций...
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // Безопасное обрезание текста
 func truncateText(text string, maxLen int) string {
 	if len(text) <= maxLen {
 		return text
 	}
 	return text[:maxLen]
+}
+
+func mdToHTML(md []byte) []byte {
+	// create markdown parser with extensions
+	extensions := mdParser.CommonExtensions | mdParser.AutoHeadingIDs // | mdParser.NoEmptyLineBeforeBlock
+	p := mdParser.NewWithExtensions(extensions)
+	doc := p.Parse(md)
+
+	// create HTML renderer with extensions
+	htmlFlags := mdHtml.CommonFlags | mdHtml.HrefTargetBlank
+	opts := mdHtml.RendererOptions{Flags: htmlFlags}
+	renderer := mdHtml.NewRenderer(opts)
+
+	return markdown.Render(doc, renderer)
+}
+
+func TelegramSupportedHTML(htmlText string) string {
+	adjustedHTMLText := adjustHTMLTags(htmlText)
+	p := bluemonday.NewPolicy()
+	p.AllowElements("b", "strong", "i", "em", "u", "ins", "s", "strike", "del", "a", "code", "pre")
+	p.AllowAttrs("href").OnElements("a")
+	p.AllowAttrs("class").OnElements("code")
+	return strings.TrimRight(p.Sanitize(adjustedHTMLText), "\n")
+}
+
+// telegram not allow h1-h6 tags
+// replace these tags with a combination of <b> and <i> for visual distinction
+func adjustHTMLTags(htmlText string) string {
+	buff := strings.Builder{}
+	tokenizer := html.NewTokenizer(strings.NewReader(htmlText))
+	for {
+		if tokenizer.Next() == html.ErrorToken {
+			return buff.String()
+		}
+		token := tokenizer.Token()
+		switch token.Type {
+		case html.StartTagToken, html.EndTagToken:
+			switch token.Data {
+			case "h1", "h2", "h3":
+				if token.Type == html.StartTagToken {
+					buff.WriteString("<b>")
+				}
+				if token.Type == html.EndTagToken {
+					buff.WriteString("</b>")
+				}
+			case "h4", "h5", "h6":
+				if token.Type == html.StartTagToken {
+					buff.WriteString("<i><b>")
+				}
+				if token.Type == html.EndTagToken {
+					buff.WriteString("</b></i>")
+				}
+			default:
+				buff.WriteString(token.String())
+			}
+		default:
+			buff.WriteString(token.String())
+		}
+	}
 }

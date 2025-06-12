@@ -114,6 +114,16 @@ HTML:
 			ollamaResult = "Ошибка генерации выжимки: " + err.Error()
 		}
 
+		// Заменяем html-ссылки на markdown-ссылки
+		htmlLinkRegex := regexp.MustCompile(`<a\s+href="([^"]+)"[^>]*>(.*?)<\/a>`)
+		ollamaResult = htmlLinkRegex.ReplaceAllStringFunc(ollamaResult, func(s string) string {
+			matches := htmlLinkRegex.FindStringSubmatch(s)
+			if len(matches) == 3 {
+				return "[" + matches[2] + "](" + matches[1] + ")"
+			}
+			return s
+		})
+
 		// Создаем содержимое markdown файла
 		markdownContent := fmt.Sprintf("# %s\n\n**URL:** %s\n\n%s\n", h1, e.Request.URL.String(), ollamaResult)
 
