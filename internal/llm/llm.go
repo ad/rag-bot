@@ -15,13 +15,6 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-type LLMEngine interface {
-	GenerateResponse(prompt string, params map[string]interface{}) (string, error)
-	ExtractEssence(query string) (string, error)
-	GenerateEmbedding(text string) ([]float32, error)
-	Answer(query string, docs []Document) (string, error)
-}
-
 func GetLLMModel() string {
 	model := os.Getenv("LLM_MODEL")
 	if model == "" {
@@ -394,40 +387,13 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 }
 
 func (h *HTTPLLMEngine) GenerateEmbedding(text string) ([]float32, error) {
-	client := NewOllamaClient()
-	return client.GenerateEmbedding(text)
-}
-
-type OllamaClient struct {
-	httpEngine *HTTPLLMEngine
-}
-
-func NewOllamaClient() *OllamaClient {
-	return &OllamaClient{
-		httpEngine: NewHTTPLLM(GetApiURL()),
-	}
-}
-
-// EmbeddingRequest альтернативная структура запроса
-type EmbeddingRequest struct {
-	Model string `json:"model"`
-	Input string `json:"input"`
-}
-
-// EmbeddingResponse структура ответа от Ollama API
-type EmbeddingResponse struct {
-	Model      string      `json:"model"`
-	Embeddings [][]float32 `json:"embeddings"`
-}
-
-func (c *OllamaClient) GenerateEmbedding(text string) ([]float32, error) {
 	// Проверяем входной текст
 	if strings.TrimSpace(text) == "" {
 		return nil, fmt.Errorf("входной текст пустой")
 	}
 
 	// Проверяем доступность модели БЕЗ логирования
-	if err := c.httpEngine.ensureModelAvailableQuiet(GetLLMEmbeddingsModel()); err != nil {
+	if err := h.ensureModelAvailableQuiet(GetLLMEmbeddingsModel()); err != nil {
 		return nil, fmt.Errorf("model not available: %w", err)
 	}
 
@@ -475,6 +441,18 @@ func (c *OllamaClient) GenerateEmbedding(text string) ([]float32, error) {
 	}
 
 	return response.Embeddings[0], nil
+}
+
+// EmbeddingRequest альтернативная структура запроса
+type EmbeddingRequest struct {
+	Model string `json:"model"`
+	Input string `json:"input"`
+}
+
+// EmbeddingResponse структура ответа от Ollama API
+type EmbeddingResponse struct {
+	Model      string      `json:"model"`
+	Embeddings [][]float32 `json:"embeddings"`
 }
 
 // ExtractEssence выделяет суть запроса, используя Ollama через HTTP API.

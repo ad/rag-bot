@@ -21,7 +21,11 @@ func main() {
 	// 1. Инициализируем компоненты
 	fmt.Println("1. Инициализация компонентов...")
 	markdownParser := parser.NewMarkdownParser()
-	llmClient := llm.NewOllamaClient()
+	llmClient := llm.NewHTTPLLM(llm.GetApiURL())
+	if llmClient == nil {
+		log.Fatal("Не удалось инициализировать LLM клиент")
+	}
+	// Создаем векторное хранилище
 	vectorStore := vectorstore.NewVectorStore()
 
 	// 2. Парсим документы

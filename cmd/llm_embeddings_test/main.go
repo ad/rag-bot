@@ -8,7 +8,10 @@ import (
 )
 
 func main() {
-	client := llm.NewOllamaClient()
+	client := llm.NewHTTPLLM(llm.GetApiURL())
+	if client == nil {
+		log.Fatal("Не удалось инициализировать LLM клиент")
+	}
 
 	fmt.Println("Тестируем генерацию эмбеддингов...")
 

@@ -14,10 +14,10 @@ type RetrievalEngine interface {
 
 type VectorRetrieval struct {
 	vectorStore *vectorstore.VectorStore
-	llmEngine   llm.LLMEngine
+	llmEngine   *llm.HTTPLLMEngine
 }
 
-func NewVectorRetrieval(vs *vectorstore.VectorStore, llm llm.LLMEngine) *VectorRetrieval {
+func NewVectorRetrieval(vs *vectorstore.VectorStore, llm *llm.HTTPLLMEngine) *VectorRetrieval {
 	return &VectorRetrieval{
 		vectorStore: vs,
 		llmEngine:   llm,

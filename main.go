@@ -269,7 +269,7 @@ func truncateText(text string, maxLen int) string {
 
 func mdToHTML(md []byte) []byte {
 	// create markdown parser with extensions
-	extensions := mdParser.CommonExtensions | mdParser.AutoHeadingIDs // | mdParser.NoEmptyLineBeforeBlock
+	extensions := mdParser.CommonExtensions | mdParser.AutoHeadingIDs | mdParser.SpaceHeadings // | mdParser.NoEmptyLineBeforeBlock
 	p := mdParser.NewWithExtensions(extensions)
 	doc := p.Parse(md)
 
