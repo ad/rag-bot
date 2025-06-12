@@ -21,7 +21,7 @@ func (rl *RateLimiter) Allow(userID int64) bool {
 	defer rl.mu.Unlock()
 
 	lastReq, exists := rl.users[userID]
-	if !exists || time.Since(lastReq) > 30*time.Second {
+	if !exists || time.Since(lastReq) > 10*time.Second {
 		rl.users[userID] = time.Now()
 		return true
 	}

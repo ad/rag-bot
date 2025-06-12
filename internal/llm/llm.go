@@ -16,7 +16,7 @@ import (
 )
 
 type LLMEngine interface {
-	GenerateResponse(prompt string) (string, error)
+	GenerateResponse(prompt string, params map[string]interface{}) (string, error)
 	GenerateEmbedding(text string) ([]float32, error)
 	Answer(query string, docs []Document) (string, error)
 }
@@ -65,7 +65,7 @@ func NewHTTPLLM(apiURL string) *HTTPLLMEngine {
 
 // ...existing structs...
 
-func (h *HTTPLLMEngine) GenerateResponse(prompt string) (string, error) {
+func (h *HTTPLLMEngine) GenerateResponse(prompt string, params map[string]interface{}) (string, error) {
 	modelName := GetLLMModel()
 
 	// Проверяем доступность модели без лишнего логирования
@@ -73,17 +73,22 @@ func (h *HTTPLLMEngine) GenerateResponse(prompt string) (string, error) {
 		return "", fmt.Errorf("model not available: %w", err)
 	}
 
+	if params == nil {
+		params = map[string]interface{}{
+			"temperature":    0.7,
+			"num_predict":    1024,
+			"top_k":          40,
+			"top_p":          0.95,
+			"repeat_penalty": 1.1,
+		}
+	}
+
 	// Подготовка запроса для Ollama
 	reqBody := OllamaRequest{
-		Model:  modelName,
-		Prompt: prompt,
-		Stream: false,
-		Options: map[string]interface{}{
-			"temperature": 0.7,
-			"num_predict": 1024,
-			"top_k":       40,
-			"top_p":       0.95,
-		},
+		Model:   modelName,
+		Prompt:  prompt,
+		Stream:  false,
+		Options: params,
 	}
 
 	jsonData, err := json.Marshal(reqBody)
