@@ -306,16 +306,16 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 
 	// Формирование контекста из документов
 	context := ""
-	for i, doc := range docs {
-		context += fmt.Sprintf("ДОКУМЕНТ %d:\nЗАГОЛОВОК: %s\nССЫЛКА: %s\nТЕКСТ: %s\n\n",
-			i+1, doc.Header, doc.Link, doc.Text)
+	for _, doc := range docs {
+		context += fmt.Sprintf("ЗАГОЛОВОК: %s\nССЫЛКА: %s\nТЕКСТ: %s\n\n----------\n\n",
+			doc.Header, doc.Link, doc.Text)
 	}
 
 	// Подготовка запроса для Ollama
 	reqBody := OllamaRequest{
 		Model:  modelName,
 		Stream: false,
-		Prompt: fmt.Sprintf("ВОПРОС ПОЛЬЗОВАТЕЛЯ: %s\n\nКОНТЕКСТ:\n%s\n\nОТВЕТ:", query, context), // <-- поменяйте местами query и context
+		Prompt: fmt.Sprintf("ДОКУМЕНТЫ:\n%s\n\nВОПРОС ПОЛЬЗОВАТЕЛЯ: %s\n\nОТВЕТ:", context, query),
 		System: `Ты - специалист технической поддержки компании Nethouse(Нетхаус). Анализируй предоставленные документы и отвечай на вопросы пользователей.
 
 ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
@@ -327,6 +327,7 @@ func (h *HTTPLLMEngine) Answer(query string, docs []Document) (string, error) {
 6. Не используй форматирование
 7. Не используй нумерацию и списки
 8. Не склоняй слова Nethouse и Нетхаус
+9. Если пользователь сообщает об ошибке, то не предлагай решений, а сразу предложи написать в поддержку по почте support@nethouse.ru
 
 ФОРМАТ ОТВЕТА:
 - Прямой ответ на вопрос
